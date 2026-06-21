@@ -48,6 +48,7 @@ public class AvatarAnimatorController : MonoBehaviour
     private float lastBeatTime = 0f;
     private float dynamicBeatThreshold = 0.05f;
     private float currentEstimatedBPM = 120f;
+    private float lastValidSoundTime = 0f;
 
 
     void OnEnable()
@@ -146,6 +147,12 @@ public class AvatarAnimatorController : MonoBehaviour
             }
         }
         catch { defaultDevice?.Dispose(); defaultDevice = null; }
+        
+        // If we are currently dancing, and heard a peak recently, ignore this silence.
+        if (isDancing && Time.time - lastValidSoundTime < 1.5f) {
+            return true;
+        }
+
         activeAudioSession = null;
         return false;
     }
@@ -225,6 +232,7 @@ public class AvatarAnimatorController : MonoBehaviour
         try
         {
             float peak = activeAudioSession.AudioMeterInformation.MasterPeakValue;
+            if (peak > SOUND_THRESHOLD) lastValidSoundTime = Time.time;
             
             // Slower dynamic threshold decay naturally filters out weaker off-beats (eighth notes)
             dynamicBeatThreshold = Mathf.Lerp(dynamicBeatThreshold, SOUND_THRESHOLD, Time.deltaTime * 0.5f);
@@ -246,7 +254,7 @@ public class AvatarAnimatorController : MonoBehaviour
                     }
 
                     bpmHistory.Add(instantaneousBPM);
-                    if (bpmHistory.Count > 8) bpmHistory.RemoveAt(0); // keep last 8 beats
+                    if (bpmHistory.Count > 16) bpmHistory.RemoveAt(0); // keep last 16 beats
 
                     // Calculate average
                     float sum = 0f;
