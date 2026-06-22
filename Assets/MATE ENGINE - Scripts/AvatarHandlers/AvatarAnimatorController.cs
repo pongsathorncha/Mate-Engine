@@ -248,13 +248,21 @@ public class AvatarAnimatorController : MonoBehaviour
             smoothedPeak = Mathf.Lerp(smoothedPeak, peak, Time.deltaTime * (peak > smoothedPeak ? 15f : 3f));
             dynamicBeatThreshold = Mathf.Lerp(dynamicBeatThreshold, SOUND_THRESHOLD, Time.deltaTime * 1.5f);
             
-            // Trigger condition requires overcoming both the dynamic threshold and the smoothed energy envelope
-            if (peak > dynamicBeatThreshold && peak > smoothedPeak * 1.2f && peak > SOUND_THRESHOLD * 1.5f)
+            if (peak > dynamicBeatThreshold && peak > smoothedPeak * 1.35f && peak > SOUND_THRESHOLD * 1.5f)
             {
                 float timeSinceLastBeat = Time.time - lastBeatTime;
                 
+                float minimumWaitTime = 0.25f;
+                // Predictive Metronome: If we have a stable tempo, block noises that fall outside the beat window
+                if (bpmHistory.Count >= 8) 
+                {
+                    float expectedInterval = 60f / currentEstimatedBPM;
+                    // Prevent any triggers until we are at least 85% of the way to the expected beat
+                    minimumWaitTime = expectedInterval * 0.85f; 
+                }
+
                 // Expand range to catch variations, but use logic to normalize
-                if (timeSinceLastBeat > 0.25f && timeSinceLastBeat < 1.5f)
+                if (timeSinceLastBeat > minimumWaitTime && timeSinceLastBeat < 1.5f)
                 {
                     float instantaneousBPM = 60f / timeSinceLastBeat;
 
@@ -271,9 +279,9 @@ public class AvatarAnimatorController : MonoBehaviour
 
                     float finalBPM = currentEstimatedBPM;
 
-                    // If the stable median BPM is very fast (> 145), we half-time it 
+                    // If the stable median BPM is very fast (> 150), we half-time it 
                     // so the avatar doesn't look frantic.
-                    if (finalBPM > 145f)
+                    if (finalBPM > 150f)
                     {
                         finalBPM /= 2f;
                     }
@@ -288,7 +296,7 @@ public class AvatarAnimatorController : MonoBehaviour
                     targetAnimatorSpeed = Mathf.Clamp(finalBPM / 120f, 0.5f, 1.5f);
                 }
                 
-                if (timeSinceLastBeat > 0.25f) // Prevent rapid double-triggering
+                if (timeSinceLastBeat > minimumWaitTime) // Prevent rapid double-triggering
                 {
                     lastBeatTime = Time.time;
                     dynamicBeatThreshold = peak; // Jump threshold to current peak
