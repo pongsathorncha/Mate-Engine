@@ -49,6 +49,8 @@ public class AvatarAnimatorController : MonoBehaviour
     private float dynamicBeatThreshold = 0.05f;
     private float currentEstimatedBPM = 120f;
     private float lastValidSoundTime = 0f;
+    private float targetAnimatorSpeed = 1f;
+    private float smoothedPeak = 0f;
 
 
     void OnEnable()
@@ -105,6 +107,8 @@ public class AvatarAnimatorController : MonoBehaviour
         if (!value)
         {
             animator.speed = 1f; // Reset speed when not dancing
+            targetAnimatorSpeed = 1f;
+            smoothedPeak = 0f;
             bpmHistory.Clear();
             activeAudioSession = null;
             if (danceTransitionCoroutine != null)
@@ -231,13 +235,21 @@ public class AvatarAnimatorController : MonoBehaviour
         if (activeAudioSession == null) return;
         try
         {
+            // Smart BPM Reset
+            if (Time.time - lastBeatTime > 3f)
+            {
+                bpmHistory.Clear();
+            }
+
             float peak = activeAudioSession.AudioMeterInformation.MasterPeakValue;
             if (peak > SOUND_THRESHOLD) lastValidSoundTime = Time.time;
             
-            // Slower dynamic threshold decay naturally filters out weaker off-beats (eighth notes)
-            dynamicBeatThreshold = Mathf.Lerp(dynamicBeatThreshold, SOUND_THRESHOLD, Time.deltaTime * 0.5f);
+            // Energy Envelope & Faster Threshold Decay
+            smoothedPeak = Mathf.Lerp(smoothedPeak, peak, Time.deltaTime * (peak > smoothedPeak ? 15f : 3f));
+            dynamicBeatThreshold = Mathf.Lerp(dynamicBeatThreshold, SOUND_THRESHOLD, Time.deltaTime * 1.5f);
             
-            if (peak > dynamicBeatThreshold && peak > SOUND_THRESHOLD * 1.5f)
+            // Trigger condition requires overcoming both the dynamic threshold and the smoothed energy envelope
+            if (peak > dynamicBeatThreshold && peak > smoothedPeak * 1.2f && peak > SOUND_THRESHOLD * 1.5f)
             {
                 float timeSinceLastBeat = Time.time - lastBeatTime;
                 
@@ -245,24 +257,35 @@ public class AvatarAnimatorController : MonoBehaviour
                 if (timeSinceLastBeat > 0.25f && timeSinceLastBeat < 1.5f)
                 {
                     float instantaneousBPM = 60f / timeSinceLastBeat;
-                    
-                    // If the detected BPM is very fast (> 135), we likely caught eighth notes 
-                    // of a slower song, or it's a fast song where half-time dancing looks better.
-                    if (instantaneousBPM > 135f)
-                    {
-                        instantaneousBPM /= 2f;
-                    }
 
                     bpmHistory.Add(instantaneousBPM);
-                    if (bpmHistory.Count > 16) bpmHistory.RemoveAt(0); // keep last 16 beats
+                    if (bpmHistory.Count > 11) bpmHistory.RemoveAt(0); // keep last 11 beats
 
-                    // Calculate average
-                    float sum = 0f;
-                    for (int i = 0; i < bpmHistory.Count; i++) sum += bpmHistory[i];
-                    currentEstimatedBPM = sum / bpmHistory.Count;
+                    // Outlier Rejection (Median Filter)
+                    if (bpmHistory.Count > 0)
+                    {
+                        List<float> sortedBpm = new List<float>(bpmHistory);
+                        sortedBpm.Sort();
+                        currentEstimatedBPM = sortedBpm[sortedBpm.Count / 2];
+                    }
 
-                    // Update animator speed (assuming default dance animations are authored for 120 BPM)
-                    animator.speed = Mathf.Clamp(currentEstimatedBPM / 120f, 0.5f, 1.5f);
+                    float finalBPM = currentEstimatedBPM;
+
+                    // If the stable median BPM is very fast (> 145), we half-time it 
+                    // so the avatar doesn't look frantic.
+                    if (finalBPM > 145f)
+                    {
+                        finalBPM /= 2f;
+                    }
+                    // If the BPM is very slow (< 75), we double-time it 
+                    // so the avatar doesn't look like it's in slow-motion.
+                    else if (finalBPM < 75f)
+                    {
+                        finalBPM *= 2f;
+                    }
+
+                    // Update target speed (assuming default dance animations are authored for 120 BPM)
+                    targetAnimatorSpeed = Mathf.Clamp(finalBPM / 120f, 0.5f, 1.5f);
                 }
                 
                 if (timeSinceLastBeat > 0.25f) // Prevent rapid double-triggering
@@ -271,6 +294,9 @@ public class AvatarAnimatorController : MonoBehaviour
                     dynamicBeatThreshold = peak; // Jump threshold to current peak
                 }
             }
+
+            // Smooth Animation Transition
+            animator.speed = Mathf.Lerp(animator.speed, targetAnimatorSpeed, Time.deltaTime * 2f);
         }
         catch 
         { 
